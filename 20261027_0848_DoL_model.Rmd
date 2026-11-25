@@ -1,0 +1,276 @@
+---
+title: "SIR Model "
+author: "Anna L"
+date: "2026-19-05"
+output: html_document
+---
+
+```{r}
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(dplyr)
+library(tidyverse)
+library(ggpubr)
+library(deSolve)
+
+theme_set(theme_classic() +
+  theme(axis.title = element_text(size = 16),
+        axis.title.x = element_text(margin = margin(t = 15, b = 15)),
+        axis.title.y = element_text(margin = margin(l = 15, r = 15)),
+        axis.text = element_text(size = 13),
+        axis.text.x = element_text(margin = margin(t = 5)),
+        axis.text.y = element_text(margin = margin(r = 5)),
+        #axis.line.x = element_line(linewidth = 1),
+        #axis.line.y = element_line(linewidth = 1),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_line(linewidth = 1),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.ticks.length = unit(.1, "in"),
+        panel.border = element_rect(color = "grey20", fill = NA, linewidth = 1.5),
+        legend.text = element_text(size = 14),
+        strip.text = element_text(size = 14),
+        strip.background = element_blank()
+        ))
+```
+
+
+```{r}
+
+
+# Illustrative parameter values
+p <- c(
+  mu1a_max = 0.8, delta1b_max = 0.6,
+  mu2b_max = 0.7, delta2a_max = 0.5,
+  K1a = 0.5, K1b = 0.5,
+  K2a = 0.5, K2b = 0.5, Kl = 0.5,
+  l2b = 0.3, l1a = 0.3,
+  rho1a = 0.2, rho2b = 0.2,
+  theta = 0.05, sigma = 0.01
+)
+
+# Initial consumer abundances and resource concentrations
+initial <- c(C1 = 0.2, C2 = 0.2, Ra = 1, Rb = 1)
+
+model <- function(time, state, p) {
+  with(as.list(c(state, p)), {
+    dC1 <- C1 * min(
+      mu1a_max * Ra / (K1a + Ra),
+      delta1b_max * Rb / (K1b + Rb)
+    ) - C1 * (theta - sigma)
+
+    dC2 <- C2 * min(
+      mu2b_max * Rb / (K2b + Rb),
+      delta2a_max * Ra / (K2a + Ra)
+    ) - C2 * (theta - sigma)
+
+    dRa <- C1 * rho1a * (l2b * C2) / (Kl + l2b * C2) -
+      (C1 * mu1a_max * Ra / (K1a + Ra) +
+       C2 * delta2a_max * Ra / (K2a + Ra))
+
+    dRb <- C2 * rho2b * (l1a * C1) / (Kl + l1a * C1) -
+      (C2 * mu2b_max * Rb / (K2b + Rb) +
+       C1 * delta1b_max * Rb / (K1b + Rb))
+
+    list(c(dC1, dC2, dRa, dRb))
+  })
+}
+
+times <- seq(0, 100, by = 0.1)
+out <- as.data.frame(ode(y = initial, times = times,
+                         func = model, parms = p))
+
+# Plot consumers and resources separately
+par(mfrow = c(2, 1))
+matplot(out$time, out[, c("C1", "C2")],
+        type = "l", lty = 1, col = 1:2,
+        xlab = "Time", ylab = "Consumer abundance")
+legend("topright", c("C1", "C2"), col = 1:2, lty = 1)
+
+matplot(out$time, out[, c("Ra", "Rb")],
+        type = "l", lty = 1, col = 3:4,
+        xlab = "Time", ylab = "Resource concentration")
+legend("topright", c("Ra", "Rb"), col = 3:4, lty = 1)
+```
+
+
+```{r}
+# Base R only
+
+simulate_population <- function(dormancy = TRUE,
+                                years = 6,
+                                dt = 0.01,
+                                K = 1) {
+  cycle <- 8                 # one wet/dry cycle
+  dry_length <- 4
+  times <- seq(0, years * cycle, by = dt)
+
+  active <- numeric(length(times))
+  dormant <- numeric(length(times))
+  active[1] <- 0.5
+
+  for (i in seq_len(length(times) - 1)) {
+    t <- times[i]
+    is_dry <- (t %% cycle) < dry_length
+
+    if (is_dry) {
+      growth <- 0.01
+      active_mortality <- 1.5
+      sporulation <- if (dormancy) 2.8 else 0
+      germination <- if (dormancy) 0.01 else 0
+    } else {
+      growth <- 0.8
+      active_mortality <- 0.03
+      sporulation <- if (dormancy) 0.005 else 0
+      germination <- if (dormancy) 1.4 else 0
+    }
+
+    # Growth is limited by the total population, including dormant individuals.
+    total <- active[i] + dormant[i]
+    per_capita_growth <- growth * max(0, 1 - total / K)
+
+    d_active <- (per_capita_growth - active_mortality - sporulation) *
+      active[i] + germination * dormant[i]
+
+    dormant_mortality <- 0.003
+    d_dormant <- sporulation * active[i] -
+      (germination + dormant_mortality) * dormant[i]
+
+    active[i + 1] <- max(0, active[i] + dt * d_active)
+    dormant[i + 1] <- max(0, dormant[i] + dt * d_dormant)
+  }
+
+  data.frame(
+    time = times,
+    active = active,
+    dormant = dormant,
+    total = active + dormant
+  )
+}
+
+without_dormancy <- simulate_population(dormancy = FALSE)
+with_dormancy <- simulate_population(dormancy = TRUE)
+
+# Shade desiccation periods in the plots.
+shade_dry_periods <- function(years = 6, cycle = 8, dry_length = 4,
+                              y_bottom, y_top, marker_width = 0.08) {
+  for (start in seq(0, years * cycle - cycle, by = cycle)) {
+    rect(start, y_bottom, start + marker_width, y_top,
+         col = adjustcolor("red", alpha.f = 0.25), border = NA)
+    rect(start + dry_length - marker_width, y_bottom,
+         start + dry_length, y_top,
+         col = adjustcolor("red", alpha.f = 0.25), border = NA)
+  }
+}
+
+# Panel 1: total population size
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 1))
+
+plot(without_dormancy$time, without_dormancy$total,
+     type = "n", log = "y", ylim = c(1e-10, 1.1),
+     xlab = "Generation", ylab = "Population (log)",
+     main = "Population Denisity Over Time")
+
+shade_dry_periods(y_bottom = 1e-10, y_top = 1.2)
+
+lines(without_dormancy$time, without_dormancy$total,
+      col = "grey", lwd = 2)
+lines(with_dormancy$time, with_dormancy$total,
+      col = "black", lwd = 2)
+
+legend("bottomleft",
+       legend = c("No dormancy", "Dormancy", "Stress"),
+       col = c("grey", "black", "red"),
+       lty = c(1, 1, 1), lwd = c(2, 2, 1), bty = "n")
+
+
+```
+
+
+```{r}
+simulate_population <- function(dormancy = TRUE,
+                                generations = 1000,
+                                dt = 0.01,
+                                K = 1) {
+  cycle <- 8
+  dry_length <- 4
+  times <- seq(0, generations, by = dt)
+
+  active <- numeric(length(times))
+  dormant <- numeric(length(times))
+  active[1] <- 0.5
+
+  for (i in seq_len(length(times) - 1)) {
+    t <- times[i]
+    is_dry <- (t %% cycle) < dry_length
+
+    if (is_dry) {
+      growth <- 0.001
+      active_mortality <- 0.02
+      sporulation <- if (dormancy) 0.05 else 0
+      germination <- if (dormancy) 0.001 else 0
+    } else {
+      growth <- 0.01
+      active_mortality <- 0.001
+      sporulation <- if (dormancy) 0.0002 else 0
+      germination <- if (dormancy) 0.08 else 0
+    }
+
+    total <- active[i] + dormant[i]
+    per_capita_growth <- growth * max(0, 1 - total / K)
+
+    d_active <- (per_capita_growth - active_mortality - sporulation) *
+      active[i] + germination * dormant[i]
+
+    dormant_mortality <- 0.00005
+    d_dormant <- sporulation * active[i] -
+      (germination + dormant_mortality) * dormant[i]
+
+    active[i + 1] <- max(0, active[i] + dt * d_active)
+    dormant[i + 1] <- max(0, dormant[i] + dt * d_dormant)
+  }
+
+  data.frame(
+    time = times,
+    active = active,
+    dormant = dormant,
+    total = active + dormant
+  )
+}
+
+without_dormancy <- simulate_population(dormancy = FALSE)
+with_dormancy <- simulate_population(dormancy = TRUE)
+
+# Mark the start and end of each dry period
+shade_dry_periods <- function(generations = 1000, cycle = 8,
+                              dry_length = 4, y_bottom, y_top,
+                              marker_width = 0.08) {
+  for (start in seq(0, generations - cycle, by = cycle)) {
+    rect(start, y_bottom, start + marker_width, y_top,
+         col = adjustcolor("red", alpha.f = 0.25), border = NA)
+    rect(start + dry_length - marker_width, y_bottom,
+         start + dry_length, y_top,
+         col = adjustcolor("red", alpha.f = 0.25), border = NA)
+  }
+}
+
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 1))
+
+plot(without_dormancy$time, without_dormancy$total,
+     type = "n", xlim = c(0, 1000), ylim = c(0, 1.1),
+     xlab = "Generation", ylab = "Population density",
+     main = "Population Density Over Time")
+
+shade_dry_periods(y_bottom = 0, y_top = 1.1)
+
+lines(without_dormancy$time, without_dormancy$total,
+      col = "grey", lwd = 2)
+lines(with_dormancy$time, with_dormancy$total,
+      col = "black", lwd = 2)
+
+legend("bottomleft",
+       legend = c("No dormancy", "Dormancy", "Desiccation start/end"),
+       col = c("grey", "black", "red"),
+       lty = c(1, 1, 1), lwd = c(2, 2, 1), bty = "n")
+```
