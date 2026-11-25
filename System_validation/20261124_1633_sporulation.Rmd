@@ -1,0 +1,108 @@
+---
+title: "System validation Spore"
+author: "Anna L"
+date: "2026-19-05"
+output: html_document
+---
+
+```{r}
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(dplyr)
+library(tidyverse)
+library(ggpubr)
+library(readxl)
+library(flextable)
+library(RcppRoll)
+library(rstatix)
+library(emmeans)
+library(patchwork)
+library(scales)
+theme_set(theme_classic() +
+  theme(axis.title = element_text(size = 16),
+        axis.title.x = element_text(margin = margin(t = 15, b = 15)),
+        axis.title.y = element_text(margin = margin(l = 15, r = 15)),
+        axis.text = element_text(size = 13),
+        axis.text.x = element_text(margin = margin(t = 5)),
+        axis.text.y = element_text(margin = margin(r = 5)),
+        #axis.line.x = element_line(linewidth = 1),
+        #axis.line.y = element_line(linewidth = 1),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_line(linewidth = 1),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.ticks.length = unit(.1, "in"),
+        panel.border = element_rect(color = "grey20", fill = NA, linewidth = 1.5),
+        legend.text = element_text(size = 14),
+        strip.text = element_text(size = 14),
+        strip.background = element_blank()
+        ))
+```
+
+```{r}
+setwd("C:/Users/ajl21/github/division.labor/System_validation/")
+
+data<-  read_excel("20261124_1622_systemvalidation_sporulation.xlsx")
+
+cfu_function <- function(data) {
+  data$cfu <- data$Colony / (10^(-data$Diluation) * data$Volume)
+  data[c("Strain", "cfu", "Type", "Replicate")]
+}
+
+cfu_table <- cfu_function(data)
+
+average_cfu <- function(data) {
+  aggregate(cfu ~ Strain + Type +Replicate, data = cfu_table, FUN = mean)
+}
+
+averages <- average_cfu(cfu_table)
+
+
+ggplot(averages, aes(x=Strain, y=cfu)) +
+    geom_boxplot() +facet_wrap(~Type, labeller = labeller(Type = 
+    c("SPO" = "SPOIIE",
+      "WT" = "Wild-Type")))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+
+ggplot(averages, aes(x = Strain, y = cfu)) +
+  geom_boxplot() +
+  facet_wrap(~Type, scales = "free_y",
+             labeller = labeller(Type = c("SPO" = "SPOIIE",
+                                          "WT"  = "Wild-Type"))) +
+  scale_y_log10(breaks = 10^(0:7), labels = label_scientific()) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +scale_y_continuous(trans = pseudo_log_trans(base = 10),
+                   breaks = c(0, 10^(2:7)),
+                   labels = label_scientific())
+
+```
+
+
+```{r}
+base_theme <- theme(
+  axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+  plot.title  = element_text(hjust = 0.5, size = 11)
+)
+
+p_spo <- averages %>%
+  filter(Type == "SPO") %>%
+  ggplot(aes(x = Strain, y = cfu)) +
+  geom_boxplot() +
+  scale_y_continuous(breaks = c(0, 5, 10)) +
+  coord_cartesian(ylim = c(0, 10)) +
+  labs(title = "SPOIIE", y = "cfu") +
+  base_theme
+
+p_wt <- averages %>%
+  filter(Type == "WT") %>%
+  ggplot(aes(x = Strain, y = cfu)) +
+  geom_boxplot() +
+  scale_y_log10(breaks = 10^(5:8), labels = label_scientific()) +
+  coord_cartesian(ylim = c(5e4, 1e8)) +
+  labs(title = "Wild-Type", y = NULL) +
+  base_theme
+
+p_spo + p_wt
+```
+
+
+  
